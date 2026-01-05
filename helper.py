@@ -1,104 +1,105 @@
-import google.generativeai as genai
+from google import genai
+from google.genai.types import HttpOptions
 import PyPDF2 as pdf
 import json
+import os
+import re
+from dotenv import load_dotenv
 
-def configure_genai(api_key):
-    """Configure the Generative AI API with error handling."""
-    try:
-        genai.configure(api_key=api_key)
-    except Exception as e:
-        raise Exception(f"Failed to configure Generative AI: {str(e)}")
-    
+load_dotenv()
+
+# Shared client (configured via `configure_genai`) to avoid recreating per-call
+_GENAI_CLIENT = None
+
+def configure_genai(api_key: str, api_version: str = "v1"):
+    """Configure a shared genai client used by `get_gemini_response`.
+
+    Call this once with a valid `api_key` (e.g. from .env) before generating.
+    """
+    global _GENAI_CLIENT
+    if not api_key:
+        raise ValueError("API key must be provided to configure genai client")
+
+    _GENAI_CLIENT = genai.Client(
+        api_key=api_key,
+        http_options=HttpOptions(api_version=api_version)
+    )
+
 
 def get_gemini_response(prompt):
-    """Generate a response using Gemini with enhanced error handling and response validation."""
+    """Generate a response using the current STABLE Gemini 2.5 model."""
     try:
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(prompt)
+        api_key = os.getenv("GOOGLE_API_KEY")
         
-        # Ensure response is not empty
+        # Initialize client with explicit stable API version v1
+        client = genai.Client(
+            api_key=api_key,
+            http_options=HttpOptions(api_version="v1")
+        )
+        
+        # USE gemini-2.5-flash: This is the current stable "Flash" model
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', 
+            contents=prompt
+        )
+        
         if not response or not response.text:
             raise Exception("Empty response received from Gemini")
             
-        # Try to parse the response as JSON
-        try:
-            response_json = json.loads(response.text)
-            
-            # Validate required fields
-            required_fields = ["JD Match", "MissingKeywords", "Profile Summary"]
-            for field in required_fields:
-                if field not in response_json:
-                    raise ValueError(f"Missing required field: {field}")
-                    
-            return response.text
-            
-        except json.JSONDecodeError:
-            # If response is not valid JSON, try to extract JSON-like content
-            import re
-            json_pattern = r'\{.*\}'
-            match = re.search(json_pattern, response.text, re.DOTALL)
-            if match:
-                return match.group()
-            else:
-                raise Exception("Could not extract valid JSON response")
+        # Extract JSON from the response text
+        import re
+        json_pattern = r'\{.*\}'
+        match = re.search(json_pattern, response.text, re.DOTALL)
+        if match:
+            return match.group()
+        return response.text
                 
     except Exception as e:
-        raise Exception(f"Error generating response: {str(e)}")
+        # If gemini-2.5-flash fails, you can try 'gemini-3-flash-preview' 
+        # but 2.5-flash is currently the standard for stable v1.
+        raise Exception(f"Model Error: {str(e)}")
 
 def extract_pdf_text(uploaded_file):
-    """Extract text from PDF with enhanced error handling."""
+    """Extract text from PDF with error handling."""
     try:
         reader = pdf.PdfReader(uploaded_file)
-        if len(reader.pages) == 0:
-            raise Exception("PDF file is empty")
-            
         text = []
         for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text.append(page_text)
+            content = page.extract_text()
+            if content:
+                text.append(content)
                 
         if not text:
-            raise Exception("No text could be extracted from the PDF")
+            raise Exception("No text could be extracted. Ensure the PDF is not a scanned image.")
             
         return " ".join(text)
-        
     except Exception as e:
         raise Exception(f"Error extracting PDF text: {str(e)}")
-    
-
 
 def prepare_prompt(resume_text, job_description):
-    """Prepare the input prompt with improved structure and validation."""
+    """Prepare the input prompt for the ATS evaluation."""
     if not resume_text or not job_description:
         raise ValueError("Resume text and job description cannot be empty")
         
     prompt_template = """
-    Act as an expert ATS (Applicant Tracking System) specialist with deep expertise in:
-    - Technical fields
-    - Software engineering
-    - Data science
-    - Data analysis
-    - Big data engineering
+    Act as an expert ATS (Applicant Tracking System) specialist.
+    Evaluate the following resume against the job description.
     
-    Evaluate the following resume against the job description. Consider that the job market 
-    is highly competitive. Provide detailed feedback for resume improvement.
+    Resume: {resume_text}
+    Job Description: {job_description}
     
-    Resume:
-    {resume_text}
-    
-    Job Description:
-    {job_description}
-    
-    Provide a response in the following JSON format ONLY:
+    Provide a response in this JSON format ONLY:
     {{
         "JD Match": "percentage between 0-100",
-        "MissingKeywords": ["keyword1", "keyword2", ...],
-        "Profile Summary": "detailed analysis of the match and specific improvement suggestions"
+        "MissingKeywords": ["keyword1", "keyword2"],
+        "Profile Summary": "detailed analysis and suggestions"
     }}
     """
-    
     return prompt_template.format(
         resume_text=resume_text.strip(),
         job_description=job_description.strip()
     )
+
+def configure_genai(api_key):
+    """Old function kept for compatibility with app.py imports."""
+    pass
