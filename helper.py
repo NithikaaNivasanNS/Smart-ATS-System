@@ -36,8 +36,6 @@ def get_gemini_response(prompt):
             api_key=api_key,
             http_options=HttpOptions(api_version="v1")
         )
-        
-        # USE gemini-2.5-flash: This is the current stable "Flash" model
         response = client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=prompt
@@ -55,8 +53,6 @@ def get_gemini_response(prompt):
         return response.text
                 
     except Exception as e:
-        # If gemini-2.5-flash fails, you can try 'gemini-3-flash-preview' 
-        # but 2.5-flash is currently the standard for stable v1.
         raise Exception(f"Model Error: {str(e)}")
 
 def extract_pdf_text(uploaded_file):
@@ -102,4 +98,5 @@ def prepare_prompt(resume_text, job_description):
 
 def configure_genai(api_key):
     """Old function kept for compatibility with app.py imports."""
+
     pass
